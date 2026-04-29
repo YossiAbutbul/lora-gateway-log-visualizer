@@ -4,7 +4,7 @@
    Performance:
    - parsing: false  (Chart.js skips per-point parsing)
    - decimation plugin (LTTB) — keeps shape, drops ~90% of hit-tests
-   - interaction.mode: 'index' (much cheaper than 'nearest')
+   - interaction.mode: 'index' + axis:'x' (binary search, not O(n) 2D scan)
 
    Click resolution still works because Chart.js exposes the original
    data point at chart.data.datasets[i].data[index] (with _record). */
@@ -84,8 +84,19 @@ function commonTooltip(extra = {}) {
 }
 
 function decimationPlugin() {
-  return { enabled: true, algorithm: 'lttb', samples: 500, threshold: 800 };
+  return { enabled: true, algorithm: 'lttb', samples: 500, threshold: 200 };
 }
+
+// Cap mousemove redraws to one per animation frame (~60 fps)
+const rafThrottlePlugin = {
+  id: 'rafThrottle',
+  beforeEvent(chart, args) {
+    if (args.event.type !== 'mousemove') return;
+    if (chart._rafPending) { args.changed = false; return; }
+    chart._rafPending = true;
+    requestAnimationFrame(() => { chart._rafPending = false; });
+  },
+};
 
 /* Apply per-chart Y-axis overrides from State.yLimits */
 function applyYLimits(yScale, chartName) {
@@ -129,16 +140,16 @@ function renderRSSI(data) {
         borderWidth: 1.4, pointRadius: 0,
         pointHoverRadius: 5, pointHoverBackgroundColor: devColor(i),
         pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2,
-        pointHitRadius: 8, tension: 0.12,
+        tension: 0.12,
         parsing: false,
       }))
     },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
       events: ['mousemove', 'mouseout', 'click', 'touchstart'],
-      interaction: { mode: 'nearest', intersect: true, axis: 'xy' },
-      hover: { mode: 'nearest', intersect: true, axis: 'xy' },
+      interaction: { mode: 'index', intersect: false, axis: 'x' },
       plugins: {
+        rafThrottle: rafThrottlePlugin,
         decimation: decimationPlugin(),
         legend: commonLegend(),
         tooltip: { enabled: false },
@@ -166,16 +177,16 @@ function renderSNR(data) {
         borderWidth: 1.4, pointRadius: 0,
         pointHoverRadius: 5, pointHoverBackgroundColor: devColor(i),
         pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2,
-        pointHitRadius: 8, tension: 0.12,
+        tension: 0.12,
         parsing: false,
       }))
     },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
       events: ['mousemove', 'mouseout', 'click', 'touchstart'],
-      interaction: { mode: 'nearest', intersect: true, axis: 'xy' },
-      hover: { mode: 'nearest', intersect: true, axis: 'xy' },
+      interaction: { mode: 'index', intersect: false, axis: 'x' },
       plugins: {
+        rafThrottle: rafThrottlePlugin,
         decimation: decimationPlugin(),
         legend: commonLegend(),
         tooltip: { enabled: false },
@@ -196,6 +207,7 @@ function renderPER(data) {
   const meta = document.getElementById('per-meta');
   if (meta) meta.textContent = `window ${win} msgs · threshold ${State.threshold}%`;
 
+  const errorColor = cssV('--error');
   const datasets = devs.map(([dev, d], i) => ({
     label: devLabel(dev),
     data: rollingPER(d.messages, win),
@@ -207,13 +219,12 @@ function renderPER(data) {
     pointHoverBackgroundColor: devColor(i),
     pointHoverBorderColor: '#fff',
     pointHoverBorderWidth: 2,
-    pointHitRadius: 8,
     tension: 0.3,
     fill: devs.length === 1,
     parsing: false,
     segment: {
       borderColor: ctx => ctx.p1.parsed.y > State.threshold
-        ? cssV('--error') : devColor(i),
+        ? errorColor : devColor(i),
     }
   }));
 
@@ -238,9 +249,9 @@ function renderPER(data) {
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
       events: ['mousemove', 'mouseout', 'click', 'touchstart'],
-      interaction: { mode: 'nearest', intersect: true, axis: 'xy' },
-      hover: { mode: 'nearest', intersect: true, axis: 'xy' },
+      interaction: { mode: 'index', intersect: false, axis: 'x' },
       plugins: {
+        rafThrottle: rafThrottlePlugin,
         decimation: decimationPlugin(),
         legend: commonLegend(),
         tooltip: commonTooltip({
@@ -327,8 +338,7 @@ function renderHist(data) {
     data: { labels, datasets },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
-      interaction: { mode: 'nearest', intersect: true, axis: 'xy' },
-      hover: { mode: 'nearest', intersect: true, axis: 'xy' },
+      interaction: { mode: 'index', intersect: false },
       plugins: { legend: commonLegend(), tooltip: commonTooltip() },
       scales: {
         x: { ...ax,
@@ -368,8 +378,7 @@ function renderFreq(data) {
     },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
-      interaction: { mode: 'nearest', intersect: true, axis: 'xy' },
-      hover: { mode: 'nearest', intersect: true, axis: 'xy' },
+      interaction: { mode: 'index', intersect: false },
       plugins: { legend: commonLegend(), tooltip: commonTooltip() },
       scales: {
         x: { ...ax, ticks: { ...ax.ticks, maxRotation: 45, minRotation: 45 } },
@@ -403,9 +412,9 @@ function renderGaps(data) {
     },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
-      interaction: { mode: 'nearest', intersect: true, axis: 'xy' },
-      hover: { mode: 'nearest', intersect: true, axis: 'xy' },
+      interaction: { mode: 'nearest', intersect: true },
       plugins: {
+        rafThrottle: rafThrottlePlugin,
         legend: commonLegend(),
         tooltip: commonTooltip({
           callbacks: {
